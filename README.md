@@ -1,7 +1,7 @@
 
 # 🌱 BR-MANGUE: Modelo de Predição para Áreas de Manguezais
 
-Este repositório contém o código e os dados necessários para executar uma aplicação baseada em [Streamlit](https://streamlit.io/), com o objetivo de simular os impactos da elevação do nível do mar na maior zona contínua de manguezais do mundo, com base no modelo BR-MANGUE.
+Este repositório contém o código e os dados necessários para executar uma aplicação baseada em [Streamlit](https://streamlit.io/), com o objetivo de simular os impactos da elevação do nível do mar em manguezais, com base no modelo BR-MANGUE.
 
 ---
 
