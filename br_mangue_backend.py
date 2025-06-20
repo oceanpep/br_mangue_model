@@ -1,6 +1,9 @@
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
+import geopandas as gpd
+from rasterio.features import rasterize
+from shapely.geometry import mapping
 
 # CONSTANTES - CLASSES DE USO DA TERRA
 MANGUE = 1
@@ -238,7 +241,66 @@ class BrMangueModel:
 
         return self.simulation_results
 
-def load_and_standardize_rasters(uso_path, alt_path, solos_path, target_resolution=None):
+def load_and_rasterize_vector_solos(solos_path, reference_raster_path, soil_attribute_column='ClasseSolos'):
+    """
+    Carrega um shapefile de solos, verifica o CRS e o rasteriza para a mesma extensão e resolução
+    de um raster de referência.
+
+    Args:
+        solos_path (str): Caminho para o shapefile de solos.
+        reference_raster_path (str): Caminho para um raster de referência (e.g., uso da terra ou altimetria)
+                                     para obter a extensão e resolução.
+        soil_attribute_column (str): Nome da coluna no shapefile que contém os valores de classe de solo.
+
+    Returns:
+        numpy.ndarray: Array rasterizado dos solos.
+        rasterio.transform.Affine: Transformação do raster de solos resultante.
+        rasterio.crs.CRS: CRS do raster de solos resultante.
+    """
+    try:
+        solos_gdf = gpd.read_file(solos_path)
+    except Exception as e:
+        raise ValueError(f"Erro ao carregar o shapefile de solos: {e}")
+
+    if not solos_gdf.crs.is_projected:
+        raise ValueError(f"O CRS do shapefile de solos ({solos_gdf.crs.to_string()}) não é projetado. "
+                         "Por favor, forneça um shapefile com CRS projetado.")
+
+    if soil_attribute_column not in solos_gdf.columns:
+        raise ValueError(f"A coluna de atributo '{soil_attribute_column}' não foi encontrada no shapefile de solos.")
+
+    with rasterio.open(reference_raster_path) as ref_src:
+        transform = ref_src.transform
+        width = ref_src.width
+        height = ref_src.height
+        crs = ref_src.crs
+        bounds = ref_src.bounds
+
+    # Reprojetar o shapefile para o CRS do raster de referência, se necessário
+    if solos_gdf.crs != crs:
+        solos_gdf = solos_gdf.to_crs(crs)
+
+    # Criar uma lista de tuplas (geometria, valor) para rasterização
+    shapes = [(mapping(geom), value) for geom, value in zip(solos_gdf.geometry, solos_gdf[soil_attribute_column])]
+
+    # Rasterizar o shapefile
+    # Usamos all_touched=True para incluir todas as células que tocam a geometria
+    # e preenchemos com 0 (CANAL_FLUVIAL) onde não há dados de solo definidos
+    rasterized_solos = rasterize(
+        shapes=shapes,
+        out_shape=(height, width),
+        transform=transform,
+        fill=CANAL_FLUVIAL,  # Valor padrão para áreas sem dados de solo
+        all_touched=True, # Inclui todas as células que tocam a geometria
+        dtype=np.int32
+    )
+
+    return rasterized_solos, transform, crs
+
+def load_and_standardize_rasters(uso_path, alt_path, target_resolution=None):
+    """
+    Carrega e padroniza rasters de uso e altimetria. Esta função foi modificada para não carregar solos.
+    """
     with rasterio.open(uso_path) as src_uso:
         if not src_uso.crs.is_projected:
             raise ValueError(f"O CRS do raster de uso ({src_uso.crs.to_string()}) não é projetado. Por favor, forneça um raster com CRS projetado.")
@@ -254,14 +316,6 @@ def load_and_standardize_rasters(uso_path, alt_path, solos_path, target_resoluti
         alt_transform = src_alt.transform
         alt_crs = src_alt.crs
         alt_res = src_alt.res
-
-    with rasterio.open(solos_path) as src_solos:
-        if not src_solos.crs.is_projected:
-            raise ValueError(f"O CRS do raster de solos ({src_solos.crs.to_string()}) não é projetado. Por favor, forneça um raster com CRS projetado.")
-        solos_data = src_solos.read(1)
-        solos_transform = src_solos.transform
-        solos_crs = src_solos.crs
-        solos_res = src_solos.res
 
     if target_resolution is None:
         target_resolution = uso_res
@@ -279,24 +333,10 @@ def load_and_standardize_rasters(uso_path, alt_path, solos_path, target_resoluti
                 (src.width / new_width), (src.height / new_height)
             )
 
-    if solos_res != target_resolution:
-        with rasterio.open(solos_path) as src:
-            new_height = int(src.height * src.res[0] / target_resolution[0])
-            new_width = int(src.width * src.res[1] / target_resolution[1])
-
-            solos_data = src.read(
-                out_shape=(1, new_height, new_width),
-                resampling=Resampling.nearest
-            )[0]
-            solos_transform = src.transform * src.transform.scale(
-                (src.width / new_width), (src.height / new_height)
-            )
-
-    min_rows = min(uso_data.shape[0], alt_data.shape[0], solos_data.shape[0])
-    min_cols = min(uso_data.shape[1], alt_data.shape[1], solos_data.shape[1])
+    min_rows = min(uso_data.shape[0], alt_data.shape[0])
+    min_cols = min(uso_data.shape[1], alt_data.shape[1])
 
     uso_data = uso_data[:min_rows, :min_cols]
     alt_data = alt_data[:min_rows, :min_cols]
-    solos_data = solos_data[:min_rows, :min_cols]
 
-    return uso_data, alt_data, solos_data, target_resolution
+    return uso_data, alt_data, target_resolution, uso_crs, uso_transform
