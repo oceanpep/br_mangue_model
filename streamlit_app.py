@@ -304,3 +304,6 @@ st.markdown("**BR_MANGUE** - Desenvolvido com Python, Streamlit e NumPy | Versã
    else:
        st.info("✅ Arquivos carregados. Configure os parâmetros e clique em 'RUN SIMULATION' para iniciar.")
 
+   else:
+       st.info("✅ Arquivos carregados. Configure os parâmetros e clique em 'RUN SIMULATION' para iniciar.")
+
