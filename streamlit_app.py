@@ -299,10 +299,6 @@ else:
 # Footer
 st.markdown("---")
 st.markdown("**BR_MANGUE** - Desenvolvido com Python, Streamlit e NumPy | Versão 2.0.1")
-               st.exception(e)
-
-   else:
-       st.info("✅ Arquivos carregados. Configure os parâmetros e clique em 'RUN SIMULATION' para iniciar.")
 
    else:
        st.info("✅ Arquivos carregados. Configure os parâmetros e clique em 'RUN SIMULATION' para iniciar.")
