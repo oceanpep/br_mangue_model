@@ -8,7 +8,8 @@ import folium
 from streamlit_folium import st_folium
 import tempfile
 import os
-from br_mangue_backend import BrMangueModel, load_and_standardize_rasters
+import zipfile
+from br_mangue_backend import BrMangueModel, load_and_standardize_rasters, load_and_rasterize_vector_solos
 
 # Configuração da página
 st.set_page_config(
@@ -26,10 +27,14 @@ st.markdown("### Sistema de Modelagem baseado em Autômatos Celulares para Dinâ
 st.sidebar.header("⚙️ Configurações da Simulação")
 
 # Upload de arquivos
-st.sidebar.subheader("📁 Upload de Dados Raster")
-uso_file = st.sidebar.file_uploader("Uso e Ocupação do Solo", type=['tif', 'tiff'], key="uso")
-alt_file = st.sidebar.file_uploader("Altimetria", type=['tif', 'tiff'], key="alt")
-solos_file = st.sidebar.file_uploader("Solos", type=['tif', 'tiff'], key="solos")
+st.sidebar.subheader("📁 Upload de Dados")
+uso_file = st.sidebar.file_uploader("Uso e Ocupação do Solo (Raster - .tif)", type=["tif", "tiff"], key="uso")
+alt_file = st.sidebar.file_uploader("Altimetria (Raster - .tif)", type=["tif", "tiff"], key="alt")
+solos_file = st.sidebar.file_uploader("Solos (Shapefile - .zip)", type=["zip"], key="solos")
+
+# Parâmetros do Shapefile de Solos
+st.sidebar.subheader("⚙️ Configurações do Shapefile de Solos")
+soil_attribute_column = st.sidebar.text_input("Nome da Coluna de Atributo do Solo no Shapefile", value="ClasseSolos")
 
 # Parâmetros da simulação
 st.sidebar.subheader("🔧 Parâmetros da Simulação")
@@ -43,7 +48,7 @@ run_simulation = st.sidebar.button("🚀 RUN SIMULATION", type="primary", use_co
 
 # Área principal
 if not all([uso_file, alt_file, solos_file]):
-   st.info("📋 Por favor, faça o upload dos três arquivos raster (Uso e Ocupação, Altimetria e Solos) para iniciar a simulação.")
+   st.info("📋 Por favor, faça o upload dos arquivos necessários (Uso e Ocupação, Altimetria e Solos) para iniciar a simulação.")
 
    # Mostrar informações sobre o modelo
    col1, col2 = st.columns(2)
@@ -87,29 +92,68 @@ else:
        with tempfile.TemporaryDirectory() as temp_dir:
            uso_path = os.path.join(temp_dir, "uso.tif")
            alt_path = os.path.join(temp_dir, "alt.tif")
-           solos_path = os.path.join(temp_dir, "solos.tif")
-
+           
            with open(uso_path, "wb") as f:
                f.write(uso_file.getbuffer())
            with open(alt_path, "wb") as f:
                f.write(alt_file.getbuffer())
-           with open(solos_path, "wb") as f:
+           
+           # Descompactar o shapefile
+           solos_zip_path = os.path.join(temp_dir, "solos.zip")
+           with open(solos_zip_path, "wb") as f:
                f.write(solos_file.getbuffer())
+           
+           with zipfile.ZipFile(solos_zip_path, 'r') as zip_ref:
+               zip_ref.extractall(temp_dir)
+           
+           # Encontrar o arquivo .shp dentro do diretório temporário
+           solos_shp_path = None
+           for root, dirs, files in os.walk(temp_dir):
+               for file in files:
+                   if file.endswith(".shp"):
+                       solos_shp_path = os.path.join(root, file)
+                       break
+               if solos_shp_path: break
+
+           if not solos_shp_path:
+               st.error("❌ Não foi possível encontrar o arquivo .shp dentro do ZIP do shapefile.")
+               st.stop()
 
            try:
-               # Carregar e padronizar dados
-               with st.spinner("📊 Carregando e padronizando dados raster..."):
-                   uso_data, alt_data, solos_data, target_resolution = load_and_standardize_rasters(
-                       uso_path, alt_path, solos_path
+               # Carregar e padronizar dados raster (uso e altimetria)
+               with st.spinner("📊 Carregando e padronizando dados raster (uso e altimetria)..."):
+                   uso_data, alt_data, target_resolution, uso_crs, uso_transform = load_and_standardize_rasters(
+                       uso_path, alt_path
                    )
 
-               st.success(f"✅ Dados carregados com sucesso! Resolução: {target_resolution}")
+               st.success(f"✅ Dados raster carregados com sucesso! Resolução: {target_resolution}")
+
+               # Rasterizar shapefile de solos
+               with st.spinner("🌍 Rasterizando shapefile de solos..."):
+                   # Usar o raster de uso como referência para a rasterização do solo
+                   solos_data, _, _ = load_and_rasterize_vector_solos(
+                       solos_shp_path, uso_path, soil_attribute_column
+                   )
+               st.success("✅ Shapefile de solos rasterizado com sucesso!")
+
+               # Garantir que todos os arrays tenham as mesmas dimensões
+               min_rows = min(uso_data.shape[0], alt_data.shape[0], solos_data.shape[0])
+               min_cols = min(uso_data.shape[1], alt_data.shape[1], solos_data.shape[1])
+
+               uso_data = uso_data[:min_rows, :min_cols]
+               alt_data = alt_data[:min_rows, :min_cols]
+               solos_data = solos_data[:min_rows, :min_cols]
+
+               # Calcular área da célula com base na resolução alvo
+               # Assumindo que target_resolution é uma tupla (res_x, res_y)
+               area_celula_calc = target_resolution[0] * target_resolution[1] / 10000 # Convertendo m² para hectares
+               st.info(f"Área da célula calculada a partir da resolução: {area_celula_calc:.4f} ha")
 
                # Inicializar modelo
                with st.spinner("🔧 Inicializando modelo BR_MANGUE..."):
                    model = BrMangueModel(
                        uso_data, alt_data, solos_data,
-                       area_celula=area_celula,
+                       area_celula=area_celula_calc, # Usar a área calculada
                        tide_height=tide_height,
                        sea_level_rise_rate=sea_level_rise_rate,
                        final_time=final_time
@@ -233,7 +277,7 @@ else:
 
                    with col1:
                        st.metric("Tempo Total", f"{final_time} anos")
-                       st.metric("Área da Célula", f"{area_celula} ha")
+                       st.metric("Área da Célula", f"{area_celula_calc:.4f} ha")
 
                    with col2:
                        st.metric("Altura da Maré", f"{tide_height} m")
@@ -246,7 +290,7 @@ else:
            except Exception as e:
                st.error(f"❌ Erro durante a simulação: {str(e)}")
                if isinstance(e, ValueError) and "CRS" in str(e):
-                   st.error("Por favor, verifique se os arquivos raster fornecidos possuem um Sistema de Coordenadas de Referência (CRS) projetado.")
+                   st.error("Por favor, verifique se os arquivos fornecidos possuem um Sistema de Coordenadas de Referência (CRS) projetado.")
                st.exception(e)
 
    else:
@@ -255,3 +299,8 @@ else:
 # Footer
 st.markdown("---")
 st.markdown("**BR_MANGUE** - Desenvolvido com Python, Streamlit e NumPy | Versão 2.0.1")
+               st.exception(e)
+
+   else:
+       st.info("✅ Arquivos carregados. Configure os parâmetros e clique em 'RUN SIMULATION' para iniciar.")
+
