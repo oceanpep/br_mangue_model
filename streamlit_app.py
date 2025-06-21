@@ -48,3 +48,4 @@ run_simulation = st.sidebar.button("🚀 RUN SIMULATION", type="primary", use_co
 
 # Área principal
 if not all([uso_file, alt_file, solos_file]):
+    st.info("📋 Por favor, faça o upload dos arquivos necessários (Uso e Ocupação, Altimetria e Solos) para iniciar a simulação.")
